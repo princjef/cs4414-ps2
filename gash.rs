@@ -41,14 +41,14 @@ impl Shell {
             match program {
                 ""      =>  { continue; }
                 "exit"  =>  { return; }
+                "cd"    =>  { self.run_cd(cmd_line); }
                 _       =>  { self.run_cmdline(cmd_line); }
             }
         }
     }
     
     fn run_cmdline(&mut self, cmd_line: &str) {
-        let mut argv: ~[~str] =
-            cmd_line.split(' ').filter_map(|x| if x != "" { Some(x.to_owned()) } else { None }).to_owned_vec();
+        let mut argv: ~[~str] = self.get_args(cmd_line);
     
         if argv.len() > 0 {
             let program: ~str = argv.remove(0);
@@ -63,10 +63,36 @@ impl Shell {
             println!("{:s}: command not found", program);
         }
     }
-    
+
     fn cmd_exists(&mut self, cmd_path: &str) -> bool {
         let ret = run::process_output("which", [cmd_path.to_owned()]);
         return ret.expect("exit code error.").status.success();
+    }
+
+    fn run_cd(&mut self, cmd_line: &str) {
+        let argv: ~[~str] = self.get_args(cmd_line);
+        let pathOpt: Option<Path> = match argv.len() {
+            1   =>  { os::homedir() }
+            0   =>  { os::homedir() }
+            _   =>  { Some(Path::new(argv[1])) }
+        };
+
+        match pathOpt {
+            Some(path)   =>  {
+                if path.is_dir() {
+                    os::change_dir(&path);
+                } else {
+                    println!("Error: {:s} is not a directory", path.as_str().unwrap());
+                }
+            }
+            None        =>  {
+                println!("Error: Invalid path");
+            }
+        };
+    }
+
+    fn get_args(&mut self, cmd_line: &str) -> ~[~str] {
+        return cmd_line.split(' ').filter_map(|x| if x != "" { Some(x.to_owned()) } else { None }).to_owned_vec();
     }
 }
 
