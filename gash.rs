@@ -18,12 +18,14 @@ use extra::getopts;
 
 struct Shell {
     cmd_prompt: ~str,
+    cmd_history: ~[~str],
 }
 
 impl Shell {
     fn new(prompt_str: &str) -> Shell {
         Shell {
             cmd_prompt: prompt_str.to_owned(),
+            cmd_history: ~[],
         }
     }
     
@@ -39,11 +41,14 @@ impl Shell {
             let program = cmd_line.splitn(' ', 1).nth(0).expect("no program");
             
             match program {
-                ""      =>  { continue; }
-                "exit"  =>  { return; }
-                "cd"    =>  { self.run_cd(cmd_line); }
-                _       =>  { self.run_cmdline(cmd_line); }
+                ""          =>  { continue; }
+                "exit"      =>  { return; }
+                "cd"        =>  { self.run_cd(cmd_line); }
+                "history"   =>  { self.run_history(cmd_line); }
+                _           =>  { self.run_cmdline(cmd_line); }
             }
+
+            self.cmd_history.push(program.to_owned());
         }
     }
     
@@ -89,6 +94,21 @@ impl Shell {
                 println!("Error: Invalid path");
             }
         };
+    }
+
+    fn run_history(&mut self, cmd_line: &str) {
+        let argv: ~[~str] = self.get_args(cmd_line);
+        if (argv.len() > 1) {
+            println!("Error: history does not take options (sadly).");
+        }
+        else {
+            let mut i = 1;
+            for entry in self.cmd_history.iter() {
+                println!("{:d} \t{:s}", i, entry.to_owned());
+                i = i + 1;
+            }
+        }
+
     }
 
     fn get_args(&mut self, cmd_line: &str) -> ~[~str] {
