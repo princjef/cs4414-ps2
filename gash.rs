@@ -13,6 +13,9 @@ extern mod extra;
 
 use std::{io, run, os};
 use std::io::buffered::BufferedReader;
+// use std::io::stdio::StdReader;
+// use std::io::Reader;
+// use std::io::Writer;
 use std::io::stdin;
 use extra::getopts;
 
@@ -36,9 +39,27 @@ impl Shell {
             print(self.cmd_prompt);
             io::stdio::flush();
             
-            let line = stdin.read_line().unwrap();
+            let mut line : ~str = stdin.read_line().unwrap().to_owned();
             let mut cmd_line: ~str = line.trim().to_owned();
             let mut background: bool = false;
+            let mut i : uint = 0;
+
+            // This block handles if there are no spaces around pipe.
+            let lineClone = line.clone();
+            for character in lineClone.chars() {
+                if character == '<' {
+                    line = line.slice(0, i).to_owned() + " < " + line.slice(i+1, line.char_len()).to_owned();
+                    i = i + 2;
+                } else if character == '>' {
+                    line = line.slice(0, i).to_owned() + " > " + line.slice(i+1, line.char_len()).to_owned();
+                    i = i + 2;
+                } else if character == '|' {
+                    line = line.slice(0, i).to_owned() + " | " + line.slice(i+1, line.char_len()).to_owned();
+                    i = i + 2;
+                }
+                i = i + 1;
+            }
+
             if cmd_line.char_len() > 0 {
                 background = cmd_line.char_at(cmd_line.char_len() - 1) == '&';
                 if background {
@@ -47,8 +68,8 @@ impl Shell {
             }
 
             let params = cmd_line.clone().to_owned();
-            let program = cmd_line.splitn(' ', 1).nth(0).expect("no program");                
-            
+            let program = cmd_line.splitn(' ', 1).nth(0).expect("no program");
+
             match program {
                 ""          =>  { continue; }
                 "exit"      =>  { return; }
@@ -80,16 +101,47 @@ impl Shell {
         
             if argv.len() > 0 {
                 let program: ~str = argv.remove(0);
-                Shell::run_cmd(program, argv);
-            }            
+                Shell::run_cmd(program, argv/*, None, false*/);
+            }
         };
     }
     
-    fn run_cmd(program: &str, argv: &[~str]) {
+    fn run_cmd(program: &str, argv: &[~str]/*, inputStream: Option<~Reader>, hasOutRedirect: bool*/) /*-> Option<~[u8]>*/ {
         if Shell::cmd_exists(program) {
             run::process_status(program, argv);
+            
+            // let mut options = run::ProcessOptions::new();
+            // options.in_fd = match inputStream {
+            //     Some(reader) => { None }
+            //     None => { Some(0) }
+            // };
+
+            // if hasOutRedirect {
+            //     options.out_fd = None;
+            // } else {
+            //     options.out_fd = Some(1);
+            // }
+
+            // let mut process = run::Process::new(program, argv, options).unwrap();
+            // match options.in_fd {
+            //     Some(_) => {  }
+            //     None => {
+            //         let buf = inputStream.read_to_str().into_bytes();
+            //         process.input().write(buf);
+            //     }
+            // }
+
+            // if hasOutRedirect {
+            //     let mut processOutput = process.finish_with_output();
+            //     return Some(processOutput.output);
+
+            // } else {
+            //     process.finish();
+            //     return None;
+            // }
         } else {
             println!("{:s}: command not found", program);
+            // return None;
         }
     }
 
