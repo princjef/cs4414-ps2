@@ -11,11 +11,10 @@
 
 extern mod extra;
 
-use std::{io, run, os};
+use std::{io, run, os, str};
 use std::io::buffered::BufferedReader;
-// use std::io::stdio::StdReader;
-// use std::io::Reader;
-// use std::io::Writer;
+use std::path::posix::Path;
+use std::io::fs::File;
 use std::io::stdin;
 use extra::getopts;
 
@@ -97,51 +96,70 @@ impl Shell {
     fn run_cmdline(cmd_line: &str) -> proc() {
         let params = cmd_line.to_owned();
         return proc() {
-            let mut argv: ~[~str] = Shell::get_args(params);
-        
-            if argv.len() > 0 {
-                let program: ~str = argv.remove(0);
-                Shell::run_cmd(program, argv/*, None, false*/);
+            if params.trim() != "" {
+                let output = Shell::handle_pipes(params, false);
+                // write output to file (if necessary and exists)
             }
         };
     }
+
+    fn handle_pipes(cmd_line: &str, out_pipe: bool) -> Option<~str> {
+        let pipeSplit = Shell::split_on_last_pipe(cmd_line);
+        let mut argv = Shell::get_args_no_redirects(pipeSplit[0]);
+        let program = argv.remove(0);
+        let hasOutRedirect = match Shell::get_output_file(cmd_line) {
+            Some(_) => { true }
+            None => {
+                if out_pipe {
+                    true
+                } else {
+                    false
+                }
+            }
+        };
+        
+        if pipeSplit.len() == 2 {
+            return Shell::run_cmd(program, argv, Shell::handle_pipes(pipeSplit[1], true), hasOutRedirect);
+        } else {
+            return Shell::run_cmd(program, argv, Shell::get_input_file_contents(cmd_line), hasOutRedirect);
+        }
+    }
     
-    fn run_cmd(program: &str, argv: &[~str]/*, inputStream: Option<~Reader>, hasOutRedirect: bool*/) /*-> Option<~[u8]>*/ {
+    fn run_cmd(program: &str, argv: &[~str], inputStr: Option<~str>, hasOutRedirect: bool) -> Option<~str> {
         if Shell::cmd_exists(program) {
-            run::process_status(program, argv);
-            
-            // let mut options = run::ProcessOptions::new();
-            // options.in_fd = match inputStream {
-            //     Some(reader) => { None }
-            //     None => { Some(0) }
-            // };
+            let mut options = run::ProcessOptions::new();
+            options.in_fd = match inputStr {
+                Some(_) => { None }
+                None => { Some(0) }
+            };
 
-            // if hasOutRedirect {
-            //     options.out_fd = None;
-            // } else {
-            //     options.out_fd = Some(1);
-            // }
+            options.out_fd = if hasOutRedirect {
+                None
+            } else {
+                Some(1)
+            };
 
-            // let mut process = run::Process::new(program, argv, options).unwrap();
-            // match options.in_fd {
-            //     Some(_) => {  }
-            //     None => {
-            //         let buf = inputStream.read_to_str().into_bytes();
-            //         process.input().write(buf);
-            //     }
-            // }
+            let mut process = run::Process::new(program, argv, options).unwrap();
+            match inputStr {
+                Some(string) => {
+                    let buf = string.into_bytes();
+                    process.input().write(buf);
+                }
+                None => {}
+            }
 
-            // if hasOutRedirect {
-            //     let mut processOutput = process.finish_with_output();
-            //     return Some(processOutput.output);
+            process.close_input();
 
-            // } else {
-            //     process.finish();
-            //     return None;
-            // }
+            if hasOutRedirect {
+                let processOutput = process.finish_with_output();
+                return Some(str::from_utf8(processOutput.output).to_owned());
+            } else {
+                process.finish();
+                return None;
+            };
         } else {
             println!("{:s}: command not found", program);
-            // return None;
+            return None;
         }
     }
 
@@ -191,6 +209,59 @@ impl Shell {
                 }
             }            
         };
+    }
+
+    fn split_on_last_pipe(cmd_line: &str) -> ~[~str] {
+        return cmd_line.rsplitn('|', 1).filter_map(|x| Some(x.trim().to_owned())).to_owned_vec();
+    }
+
+    fn get_input_file_contents(cmd_line: &str) -> Option<~str> {
+        return match cmd_line.splitn('<', 1).nth(1) {
+            Some(inputFileCandidate) => {
+                match inputFileCandidate.trim().splitn(' ', 1).nth(0) {
+                    Some(inputFile) => {
+                        match File::open(&Path::new(inputFile)) {
+                            Some(mut file) => {
+                                Some(file.read_to_str())
+                            }
+                            None => {
+                                println!("File {:s} does not exist", inputFile);
+                                None
+                            }
+                        }
+                    }
+                    None => { None }
+                }
+            }
+            None => { None }
+        };
+    }
+
+    fn get_output_file(cmd_line: &str) -> Option<~str> {
+        return match cmd_line.splitn('>', 1).nth(1) {
+            Some(inputFileCandidate) => {
+                match inputFileCandidate.trim().splitn(' ', 1).nth(0) {
+                    Some(inputFile) => { Some(inputFile.to_owned()) }
+                    None => { None }
+                }
+            }
+            None => { None }
+        };
+    }
+
+    fn get_args_no_redirects(cmd_line: &str) -> ~[~str] {
+        let mut activeRedirect = false;
+        return cmd_line.split(' ').filter_map(|x| if x == ">" || x == "<" {
+            activeRedirect = true;
+            None
+        } else if x == "" {
+            None
+        } else if activeRedirect {
+            activeRedirect = false;
+            None
+        } else {
+            Some(x.to_owned())
+        }).to_owned_vec();
     }
 
     fn get_args(cmd_line: &str) -> ~[~str] {
