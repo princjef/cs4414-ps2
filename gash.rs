@@ -16,11 +16,12 @@ use std::io::buffered::BufferedReader;
 use std::path::posix::Path;
 use std::io::fs::File;
 use std::io::stdin;
+use std::io::signal::{Listener, Interrupt};
 use extra::getopts;
 
 struct Shell {
-    cmd_prompt: ~str,
-    cmd_history: ~[~str],
+    cmd_prompt : ~str,
+    cmd_history : ~[~str],
 }
 
 impl Shell {
@@ -33,11 +34,44 @@ impl Shell {
     
     fn run(&mut self) {
         let mut stdin = BufferedReader::new(stdin());
+
+        // let (port_interrupt, chan_interrupt) : (Port<~str>, Chan<~str>) = Chan::new();
+        let (port_exit, chan_exit) : (Port<int>, Chan<int>) = Chan::new();
+        let (port_PID, chan_PID) : (Port<i32>, Chan<i32>) = Chan::new();
+        // 99 is kill signal!
+        spawn(proc() {
+            let mut listener = Listener::new();
+            listener.register(Interrupt);
+            let mut last_pid : i32 = -1;
+            loop {
+                match port_PID.try_recv() {
+                    Some(pid) => { last_pid = pid }
+                    None    => {}
+                }
+                match port_exit.try_recv() {
+                    Some(99)    => { listener.unregister(Interrupt);
+                                     return }
+                    _   => {}
+                }
+                match listener.port.try_recv() {
+                    Some(Interrupt) => {
+                        println!("Attempting to kill process with PID: {:d}", last_pid);
+                        unsafe { 
+                            let result : i32 = std::libc::funcs::posix88::signal::kill(last_pid, 0); 
+                            println!("Result of kill is: {:d}", result);
+                        }
+                        // KILL LAST_PID
+                       // std::libc::funcs::posix88::signal::kill();
+                    }
+                    _ => {}
+                }
+            }
+        });
         
         loop {
             print(self.cmd_prompt);
             io::stdio::flush();
-            
+
             let mut line : ~str = stdin.read_line().unwrap().to_owned();
             let mut cmd_line: ~str = line.trim().to_owned();
             let mut background: bool = false;
@@ -71,21 +105,27 @@ impl Shell {
 
             match program {
                 ""          =>  { continue; }
-                "exit"      =>  { return; }
-                "cd"        =>  { Shell::run_check_mode(background, Shell::run_cd(params)); }
-                "history"   =>  { Shell::run_check_mode(background, Shell::run_history(params, self.cmd_history)); }
-                _           =>  { Shell::run_check_mode(background, Shell::run_cmdline(params)); }
+                "exit"      =>  { chan_exit.send(99);   // Sends kill signal to listener for ^C.
+                                  return; }
+                "cd"        =>  { Shell::run_check_mode(background, Shell::run_cd(params), &chan_PID); }
+                "history"   =>  { Shell::run_check_mode(background, Shell::run_history(params, self.cmd_history), &chan_PID); }
+                _           =>  { Shell::run_check_mode(background, Shell::run_cmdline(params), &chan_PID); }
             }
 
             self.cmd_history.push(program.to_owned());
         }
     }
 
-    fn run_check_mode(background: bool, f: proc()) {
+    fn run_check_mode(background: bool, f: proc(), chan_PID : &Chan<i32>) {
         if background {
             spawn(proc() { f(); });
         } else {
-            f();
+            let (port_temp, chan_temp) : (Port<i32>, Chan<i32>) = Chan::new();
+            spawn(proc() {
+                unsafe { chan_temp.send(std::libc::getpid()); }
+                f();
+            });
+            chan_PID.send(port_temp.recv());
         }
     }
     
