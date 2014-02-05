@@ -99,6 +99,18 @@ impl Shell {
             if params.trim() != "" {
                 let output = Shell::handle_pipes(params, false);
                 // write output to file (if necessary and exists)
+                match output {
+                    Some(outString) => {
+                        match Shell::get_output_file(params) {
+                            Some(fileName) => {
+                                let mut f = File::create(&Path::new(fileName));
+                                f.write(outString.into_bytes());
+                            }
+                            None => { /* Shouldn't happen... */ }
+                        }
+                    }
+                    None => { /*Do nothing*/ }
+                }
             }
         };
     }
