@@ -18,6 +18,11 @@ use std::io::fs::File;
 use std::io::stdin;
 use std::io::signal::{Listener, Interrupt};
 use extra::getopts;
+use std::libc::types::os::arch::posix88::{pid_t};
+use std::libc::{c_int};
+
+static exit_code : i32 = -999;
+static nop_code : i32 = -1;
 
 struct Shell {
     cmd_prompt : ~str,
@@ -25,6 +30,7 @@ struct Shell {
 }
 
 impl Shell {
+
     fn new(prompt_str: &str) -> Shell {
         Shell {
             cmd_prompt: prompt_str.to_owned(),
@@ -33,14 +39,18 @@ impl Shell {
     }
     
     fn run(&mut self) {
+        #[nolink]
+        extern { fn setpgid(pid : pid_t, pgid: pid_t) -> c_int; }
+        unsafe { println!("setting pgid... {:d}", setpgid(0, 0)); }
+        
         let mut stdin = BufferedReader::new(stdin());
 
         // let (port_interrupt, chan_interrupt) : (Port<~str>, Chan<~str>) = Chan::new();
         let (port_PID, chan_PID) : (Port<i32>, Chan<i32>) = Chan::new();
-        let (port_temp, chan_temp) : (Port<i32>, Chan<i32>) = Chan::new();
-            // -99 is "exit" signal
+        let (port_status, chan_status) : (Port<i32>, Chan<i32>) = Chan::new();
             // -1 is "continue" signal
-        chan_temp.send(-1);
+        chan_status.send(nop_code); // Initial "go" signal, could be any number...
+            // -2 is "exit" signal.
         spawn(proc() {
             let mut listener = Listener::new();
             listener.register(Interrupt);
@@ -48,44 +58,43 @@ impl Shell {
             let mut last_pid : i32 = 1;
             loop {
                 match port_PID.try_recv() {
-                    Some(-99) => {
+                    Some(status) if status == exit_code => {
                         listener.unregister(Interrupt);
-                        chan_temp.send(-99);    // Exit code.
+                        // println!("Matched exit code");
                         return;
+                        // MAKE IT EXIT RIGHT HERE!
                     }
-                    Some(-1) => {
-                        port_PID.recv();     // Burn nop
-                        chan_temp.send(-1);    // To complete process
+                    Some(pid) if pid == nop_code => {
+                        // println!("Matched nop code");
+                        chan_status.send(nop_code);    // To complete process
                     }
                     Some(pid) => {
-                        println!("got one")
+                        // println!("Matched PID")
                         let mut my_pid : i32;
                         unsafe { my_pid = std::libc::getpid(); }
                         if (pid != my_pid) {
                             last_pid = pid;
-                            println!("Changed PID to {:d}", last_pid);
+                            // println!("Changed PID to {:d}", last_pid);
                         }
-                            port_PID.recv();    // Burn nop
-                            chan_temp.send(-1);   // To complete process
+                            chan_status.send(nop_code);   // To complete process
                     }
                     None    => {}
                 }
-                match listener.port.try_recv() {
-                    Some(Interrupt) => {
-                        // chan_temp.send(port_PID.recv());
-                        println!("Killing {:d}", last_pid);
-                        unsafe { 
-                            let result : i32 = std::libc::funcs::posix88::signal::kill(last_pid, 0);
-                        } 
-                    }
-                    _ => {}
-                }
+
+                // match listener.port.try_recv() {
+                //     Some(Interrupt) => {
+                //         println!("Killing {:d}", last_pid);
+                //         // unsafe { 
+                //         //     let result : i32 = std::libc::funcs::posix88::signal::kill(last_pid, 0);
+                //         // } 
+                //     }
+                //     _ => {}
+                // }
             }
         });
         
         loop {
-            let status : i32 = port_temp.recv();   // Wait for op to finish.
-            if (status == -99) { return; }
+            let status : i32 = port_status.recv();   // Wait for op to finish.
             print(self.cmd_prompt); // Prints "gash >"
             io::stdio::flush();
 
@@ -121,16 +130,13 @@ impl Shell {
             let program = cmd_line.splitn(' ', 1).nth(0).expect("no program");
 
             match program {
-                ""          =>  { chan_PID.send(-1);    // nop
-                                  chan_PID.send(-1);   // nop
+                ""          =>  { chan_PID.send(nop_code);
                                   continue; }
-                "exit"      =>  { chan_PID.send(-99); }  // Exit
-                "cd"        =>  { /*chan_temp.send(-1);*/
-                                  Shell::run_check_mode(background, Shell::run_cd(params), &chan_PID); }
-                "history"   =>  { /*chan_temp.send(-1);*/
-                                  Shell::run_check_mode(background, Shell::run_history(params, self.cmd_history), &chan_PID); }
-                _           =>  { /*chan_temp.send(-1);*/
-                                  Shell::run_check_mode(background, Shell::run_cmdline(params), &chan_PID); }
+                "exit"      =>  { chan_PID.send(exit_code);
+                                  return; }  // Exit
+                "cd"        =>  { Shell::run_check_mode(background, Shell::run_cd(params), &chan_PID); }
+                "history"   =>  { Shell::run_check_mode(background, Shell::run_history(params, self.cmd_history), &chan_PID); }
+                _           =>  { Shell::run_check_mode(background, Shell::run_cmdline(params), &chan_PID); }
             }
 
             self.cmd_history.push(program.to_owned());
@@ -140,18 +146,22 @@ impl Shell {
     fn run_check_mode(background: bool, f: proc(), chan_PID : &Chan<i32>) {
         let (port_temp, chan_temp) : (Port<i32>, Chan<i32>) = Chan::new();
         if background {
-            spawn(proc() { f(); });
-            chan_PID.send(-1);
-            chan_PID.send(-1);
+            spawn(proc() { 
+                #[nolink]
+                extern { fn setpgid(pid : pid_t, pgid: pid_t) -> c_int; }
+                unsafe { println!("Setting pgid... {:d}", setpgid(std::libc::getpid(), 0)); }
+
+                f(); 
+            });
+            chan_PID.send(nop_code);  // Don't send PID.
         } else {
             spawn(proc() {
-                unsafe { chan_temp.send(std::libc::getpid()); 
-                    println!("PID is {:d}", std::libc::getpid());
-                }
                 f();
-                chan_temp.send(-1);
+                unsafe { 
+                    println!("Sending new PID of {:d}", std::libc::getpid());
+                    chan_temp.send(std::libc::getpid()); 
+                }
             });
-            chan_PID.send(port_temp.recv());
             chan_PID.send(port_temp.recv());
         }
     }
