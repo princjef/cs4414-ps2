@@ -156,16 +156,24 @@ impl Shell {
             let mut options = run::ProcessOptions::new();
             options.in_fd = match inputStr {
                 Some(_) => { None }
-                None => { Some(0) }
+                None => { Some(0) } // 0 is stdin.
             };
 
             options.out_fd = if hasOutRedirect {
                 None
             } else {
-                Some(1)
+                Some(1) // 1 is stdout.
             };
 
             let mut process = run::Process::new(program, argv, options).unwrap();
+
+            unsafe {
+                println!("PID is {:d}", process.get_id());
+                println!("Changing PID: {:d}", std::libc::setpgid(process.get_id(), process.get_id()));
+                println!("PID is now {:d}", process.get_id());
+                println!("Error is {:d} with string {:s}", os::errno(), os::last_os_error());
+            }
+
             match inputStr {
                 Some(string) => {
                     let buf = string.into_bytes();
