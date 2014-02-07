@@ -297,22 +297,59 @@ impl Shell {
     }
 
     fn get_args_no_redirects(cmd_line: &str) -> ~[~str] {
-        let mut activeRedirect = false;
-        return cmd_line.split(' ').filter_map(|x| if x == ">" || x == "<" {
-            activeRedirect = true;
-            None
-        } else if x == "" {
-            None
-        } else if activeRedirect {
-            activeRedirect = false;
-            None
-        } else {
-            Some(x.to_owned())
-        }).to_owned_vec();
+        let mut activeRedirect: bool = false;
+        let mut args: ~[~str] = ~[];
+        let mut input: ~[~str] = Shell::get_args(cmd_line);
+        for arg in input.mut_iter() {
+            if *arg == ~">" || *arg == ~"<" {
+                activeRedirect = true;
+            } else if activeRedirect {
+                activeRedirect = false;
+            } else {
+                let newArg = arg.to_owned();
+                args.push(newArg);
+            }
+        }
+
+        let result = args;
+        return result;
     }
 
     fn get_args(cmd_line: &str) -> ~[~str] {
-        return cmd_line.split(' ').filter_map(|x| if x != "" { Some(x.to_owned()) } else { None }).to_owned_vec();
+        let mut current: ~str = ~"";
+        let mut escape: bool = false;
+        let mut quoted: bool = false;
+        let mut params: ~[~str] = ~[];
+
+        for symbol in cmd_line.chars() {
+            if escape {
+                if symbol == 't' || symbol == 'n' || symbol == 'r' {
+                    current = current + "\\";
+                }
+                current = current + str::from_char(symbol);
+                escape = false;
+            } else if symbol == ' ' || symbol == '\t' {
+                if quoted {
+                    current = current + str::from_char(symbol);
+                } else if current.char_len() != 0 {
+                    params.push(current.to_owned());
+                    current = ~"";
+                }
+            } else if symbol == '\\' {
+                escape = true;
+            } else if symbol == '"' {
+                quoted = !quoted;
+            } else {
+                current = current + str::from_char(symbol);
+            }
+        }
+
+        if current.char_len() > 0 {
+            params.push(current.to_owned());
+        }
+
+        let result = params;
+        return result;
     }
 }
 
