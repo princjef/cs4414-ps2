@@ -63,26 +63,9 @@ impl Shell {
             print(self.cmd_prompt); // Prints "gash >"
             io::stdio::flush();
 
-            let mut line : ~str = stdin.read_line().unwrap().to_owned();
+            let line : ~str = stdin.read_line().unwrap().to_owned();
             let mut cmd_line: ~str = line.trim().to_owned();
             let mut background: bool = false;
-            let mut i : uint = 0;
-
-            // This block handles if there are no spaces around pipe.
-            let lineClone = line.clone();
-            for character in lineClone.chars() {
-                if character == '<' {
-                    line = line.slice(0, i).to_owned() + " < " + line.slice(i+1, line.char_len()).to_owned();
-                    i = i + 2;
-                } else if character == '>' {
-                    line = line.slice(0, i).to_owned() + " > " + line.slice(i+1, line.char_len()).to_owned();
-                    i = i + 2;
-                } else if character == '|' {
-                    line = line.slice(0, i).to_owned() + " | " + line.slice(i+1, line.char_len()).to_owned();
-                    i = i + 2;
-                }
-                i = i + 1;
-            }
 
             if cmd_line.char_len() > 0 {
                 background = cmd_line.char_at(cmd_line.char_len() - 1) == '&';
