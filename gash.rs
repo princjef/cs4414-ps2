@@ -18,8 +18,8 @@ use std::io::fs::File;
 use std::io::stdin;
 use std::io::signal::{Listener, Interrupt};
 use extra::getopts;
-use std::libc::types::os::arch::posix88::{pid_t};
-use std::libc::{c_int};
+// use std::libc::types::os::arch::posix88::{pid_t};
+// use std::libc::{c_int};
 
 static exit_code : i32 = -999;
 static nop_code : i32 = -1;
@@ -39,18 +39,18 @@ impl Shell {
     }
     
     fn run(&mut self) {
-        #[nolink]
-        extern { fn setpgid(pid : pid_t, pgid: pid_t) -> c_int; }
-        unsafe { println!("setting pgid... {:d}", setpgid(0, 0)); }
+        // I thought this would declare a new process group that I can use
+        // to put background processes in later so they didn't get sent the
+        // SIGINT signal. Needless to say it doesn't work...
+        // #[nolink]
+        // extern { fn setpgid(pid : pid_t, pgid: pid_t) -> c_int; }
+        // unsafe { println!("setting pgid... {:d}", setpgid(0, 0)); }
         
         let mut stdin = BufferedReader::new(stdin());
 
-        // let (port_interrupt, chan_interrupt) : (Port<~str>, Chan<~str>) = Chan::new();
         let (port_PID, chan_PID) : (Port<i32>, Chan<i32>) = Chan::new();
         let (port_status, chan_status) : (Port<i32>, Chan<i32>) = Chan::new();
-            // -1 is "continue" signal
-        chan_status.send(nop_code); // Initial "go" signal, could be any number...
-            // -2 is "exit" signal.
+        chan_status.send(nop_code);
         spawn(proc() {
             let mut listener = Listener::new();
             listener.register(Interrupt);
@@ -62,8 +62,10 @@ impl Shell {
                         listener.unregister(Interrupt);
                         // println!("Matched exit code");
                         return;
-                        // MAKE IT EXIT RIGHT HERE!
                     }
+                    // These two would work if the SIGINT signal didn't get sent
+                    // to everything... They're not necessary right now but I don't
+                    // want to take them out in case we end up using the PID later.
                     Some(pid) if pid == nop_code => {
                         // println!("Matched nop code");
                         chan_status.send(nop_code);    // To complete process
@@ -81,12 +83,13 @@ impl Shell {
                     None    => {}
                 }
 
+                // This MIGHT kill the process if it wasn't already killed along with everything else...
                 // match listener.port.try_recv() {
                 //     Some(Interrupt) => {
                 //         println!("Killing {:d}", last_pid);
-                //         // unsafe { 
-                //         //     let result : i32 = std::libc::funcs::posix88::signal::kill(last_pid, 0);
-                //         // } 
+                //         unsafe { 
+                //             let result : i32 = std::libc::funcs::posix88::signal::kill(last_pid, 0);
+                //         } 
                 //     }
                 //     _ => {}
                 // }
@@ -94,7 +97,7 @@ impl Shell {
         });
         
         loop {
-            let status : i32 = port_status.recv();   // Wait for op to finish.
+            port_status.recv();   // Wait for op to finish.
             print(self.cmd_prompt); // Prints "gash >"
             io::stdio::flush();
 
@@ -147,9 +150,11 @@ impl Shell {
         let (port_temp, chan_temp) : (Port<i32>, Chan<i32>) = Chan::new();
         if background {
             spawn(proc() { 
-                #[nolink]
-                extern { fn setpgid(pid : pid_t, pgid: pid_t) -> c_int; }
-                unsafe { println!("Setting pgid... {:d}", setpgid(std::libc::getpid(), 0)); }
+                // This should have moved the process into a new process group.
+                // It didn't work though. Still got SIGINT from the interrupt.
+                // #[nolink]
+                // extern { fn setpgid(pid : pid_t, pgid: pid_t) -> c_int; }
+                // unsafe { println!("Setting pgid... {:d}", setpgid(std::libc::getpid(), 0)); }
 
                 f(); 
             });
@@ -158,7 +163,7 @@ impl Shell {
             spawn(proc() {
                 f();
                 unsafe { 
-                    println!("Sending new PID of {:d}", std::libc::getpid());
+                    // println!("Sending new PID of {:d}", std::libc::getpid());
                     chan_temp.send(std::libc::getpid()); 
                 }
             });
