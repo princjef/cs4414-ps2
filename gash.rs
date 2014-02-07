@@ -50,7 +50,7 @@ impl Shell {
                     Some(status) if status == exit_code => {
                         listener.unregister(Interrupt);
                         unsafe { std::libc::exit(1 as std::libc::c_int); }
-                        // return;
+                        // return; // hangs if child processes running, so we used exit.
                     }
                     Some(response) => { chan_status.send(response); }   // To complete process
                     None    => {}
@@ -59,7 +59,7 @@ impl Shell {
         });
         
         loop {
-            port_status.recv();   // Wait for op to finish.
+            port_status.recv();     // Wait for last op to finish.
             print(self.cmd_prompt); // Prints "gash >"
             io::stdio::flush();
 
@@ -80,8 +80,7 @@ impl Shell {
             match program {
                 ""          =>  { chan_func.send(nop_code);
                                   continue; }
-                "exit"      =>  { chan_func.send(exit_code);
-                                  return; }  // Exit
+                "exit"      =>  { chan_func.send(exit_code); }  // Exit
                 "cd"        =>  { Shell::run_check_mode(background, Shell::run_cd(params), &chan_func); }
                 "history"   =>  { Shell::run_check_mode(background, Shell::run_history(params, self.cmd_history), &chan_func); }
                 _           =>  { Shell::run_check_mode(background, Shell::run_cmdline(params), &chan_func); }
@@ -97,13 +96,13 @@ impl Shell {
             spawn(proc() { 
                 f(); 
             });
-            chan_func.send(nop_code);  // Don't wait til f returns.
+            chan_func.send(nop_code);  // Return immediately.
         } else {
             spawn(proc() {
                 f();
-                chan_temp.send(nop_code); // Wait til f returns.
+                chan_temp.send(nop_code); // Wait until f returns.
             });
-            chan_func.send(port_temp.recv());
+            chan_func.send(port_temp.recv());   // Pass on the message.
         }
     }
     
@@ -127,7 +126,7 @@ impl Shell {
                             None => { /* Shouldn't happen... */ }
                         }
                     }
-                    None => { /*Do nothing*/ }
+                    None => {}
                 }
             }
         };
@@ -140,11 +139,8 @@ impl Shell {
         let hasOutRedirect = match Shell::get_output_file(cmd_line) {
             Some(_) => { true }
             None => {
-                if out_pipe {
-                    true
-                } else {
-                    false
-                }
+                if out_pipe { true } 
+                else { false }
             }
         };
         
