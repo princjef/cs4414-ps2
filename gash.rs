@@ -114,20 +114,7 @@ impl Shell {
         let params = cmd_line.to_owned();
         return proc() {
             if params.trim() != "" {
-                let output = Shell::handle_pipes(params, false);
-                // write output to file (if necessary and exists)
-                match output {
-                    Some(outString) => {
-                        match Shell::get_output_file(params) {
-                            Some(fileName) => {
-                                let mut f = File::create(&Path::new(fileName));
-                                f.write(outString.into_bytes());
-                            }
-                            None => { /* Shouldn't happen... */ }
-                        }
-                    }
-                    None => {}
-                }
+                Shell::handle_pipes(params, false);
             }
         };
     }
@@ -145,13 +132,13 @@ impl Shell {
         };
         
         if pipeSplit.len() == 2 {
-            return Shell::run_cmd(program, argv, Shell::handle_pipes(pipeSplit[1], true), hasOutRedirect);
+            return Shell::run_cmd(program, argv, Shell::handle_pipes(pipeSplit[1], true), hasOutRedirect, None);
         } else {
-            return Shell::run_cmd(program, argv, Shell::get_input_file_contents(cmd_line), hasOutRedirect);
+            return Shell::run_cmd(program, argv, Shell::get_input_file_contents(cmd_line), hasOutRedirect, Shell::get_output_file(cmd_line));
         }
     }
     
-    fn run_cmd(program: &str, argv: &[~str], inputStr: Option<~str>, hasOutRedirect: bool) -> Option<~str> {
+    fn run_cmd(program: &str, argv: &[~str], inputStr: Option<~str>, hasOutRedirect: bool, outFilename: Option<~str>) -> Option<~str> {
         if Shell::cmd_exists(program) {
             let mut options = run::ProcessOptions::new();
             options.in_fd = match inputStr {
@@ -159,11 +146,18 @@ impl Shell {
                 None => { Some(0) } // 0 is stdin.
             };
 
-            options.out_fd = if hasOutRedirect {
-                None
-            } else {
-                Some(1) // 1 is stdout.
-            };
+            unsafe {
+                options.out_fd = if hasOutRedirect {
+                    match outFilename {
+                        Some(ref filename) => {
+                            Some(std::libc::funcs::posix88::fcntl::open(filename.to_c_str().unwrap(), std::libc::consts::os::posix88::O_RDWR | std::libc::consts::os::posix88::O_TRUNC | std::libc::consts::os::posix88::O_CREAT, std::libc::consts::os::posix88::S_IRUSR | std::libc::consts::os::posix88::S_IWUSR))
+                        }
+                        None => {None}
+                    }
+                } else {
+                    Some(1) // 1 is stdout.
+                };                
+            }
 
             let mut process = run::Process::new(program, argv, options).unwrap();
 
@@ -178,8 +172,16 @@ impl Shell {
             process.close_input();
 
             if hasOutRedirect {
-                let processOutput = process.finish_with_output();
-                return Some(str::from_utf8(processOutput.output).to_owned());
+                match outFilename {
+                    Some(_) => {
+                        process.finish();
+                        return None;
+                    }
+                    None => {
+                        let processOutput = process.finish_with_output();
+                        return Some(str::from_utf8(processOutput.output).to_owned());
+                    }
+                }
             } else {
                 process.finish();
                 return None;
