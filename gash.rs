@@ -1,12 +1,11 @@
 //
 // gash.rs
 //
-// Starting code for PS2
+// Completed code for PS2
 // Running on Rust 0.9
 //
 // University of Virginia - cs4414 Spring 2014
-// Weilin Xu, David Evans
-// Version 0.4
+// Matt Pearson-Beck, Jeff Principe
 //
 
 extern mod extra;
